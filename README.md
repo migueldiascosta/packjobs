@@ -2,6 +2,10 @@
 
 Pack multiple small jobs into large queue jobs
 
+This can be thought of as a highly simplified folder based version of 
+
+https://pythonhosted.org/FireWorks/multi_job.html
+
 ### How it works
 
 This merely generates a queue job script and a (mpi-aware) python script
