@@ -7,7 +7,7 @@ from glob import glob
 from textwrap import dedent
 from collections import namedtuple
 
-__version__ = 20170330
+__version__ = 20170331
 
 __doc__ = """Pack multiple small jobs into large queue jobs
 
@@ -20,27 +20,28 @@ __doc__ = """Pack multiple small jobs into large queue jobs
   * An Inner mpirun in the job launchers run the application inside each node
 
   * The "trick" here is simply to make the queue treat the inner mpi processes
-  * as if they were openmp threads of the outer mpi processes
+    as if they were openmp threads of the outer mpi processes
 
 * How to use
 
   * Run ./packjobs.py -h to see all the command line options
 
-  * Test with e.g. (2 nodes, 12 procs per job, 2*24/12=4 simultaneous jobs)
-  *  ./packjobs.py -i jobs_folder -n 2 -r vasp_std -m VASP --ppj 12 --hours 1
+  * Test run with e.g. 2 nodes, 12 procs per job, 2*24/12=4 simultaneous jobs, 1 hour:
+    ./packjobs.py -i jobs_folder -r vasp_std -m VASP --nodes 2 --cpn 24 --ppj 12 --time 1
 
-  * Production with e.g. (50 nodes, 4 procs per job, 50*24/4=300 simultaneous jobs)
-  * ./packjobs.py -i jobs_folder -n 50 -r vasp_std -m VASP --ppj 4 --hours 24
+  * Production run with e.g. 50 nodes, 4 procs per job, 50*24/4=300 simultaneous jobs, 24 hours:
+    ./packjobs.py -i jobs_folder -r vasp_std -m VASP --nodes 50 --cpn 24 --ppj 4 --time 24
 
 * Limitations
 
   * If subfolders are added to the job folder after the launchers start running,
-  * the new subfolders will not be considered, although this may change in the future
+    the new subfolders will not be considered, although this may change in the future
 
   * However, this script can be run multiple times on the same job folder,
-  * without duplications (the script tags each subfolder as "running" or "done")
+    without duplications (the script tags each subfolder as "running" or "done")
 
   * After a queue job is killed or expires, you may need to clean any "running" tags
+    with "--clean running"
 """
 
 
@@ -50,34 +51,34 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawTextHelpFormatter)
 
-    parser.add_argument('-i', dest='folder', type=str,
+    parser.add_argument('-i', '--input', dest='folder', type=str,
                         help="folder containing job folders (mandatory)", required=True)
 
-    parser.add_argument('-n', dest='nodes', type=int,
-                        help="number of nodes (mandatory)", required=True)
-
-    parser.add_argument('-r', dest='job_cmd', type=str,
+    parser.add_argument('-r', '--run', dest='job_cmd', type=str,
                         help="job command (e.g. vasp_std) (mandatory)", required=True)
 
-    parser.add_argument('-m', dest='job_mod', type=str,
+    parser.add_argument('-m', '--mod', dest='job_mod', type=str,
                         help="job module (e.g. VASP) (mandatory)", required=True)
 
-    parser.add_argument('--cpn', dest='cores_per_node', type=int, default=24,
-                        help="number of cores per node (default: 24)")
+    parser.add_argument('-n', '--nodes', dest='nodes', type=int,
+                        help="number of nodes (mandatory)", required=True)
 
-    parser.add_argument('--ppj', dest='procs_per_job', type=int, default=1,
-                        help="number of mpi processes per job (default: 1)")
-
-    parser.add_argument('--hours', dest='hours', type=int, default=1,
+    parser.add_argument('-t', '--time', dest='hours', type=int, default=1,
                         help="number of hours for qjob (default: 1)")
 
-    parser.add_argument('--dry-run', dest='dry', action='store_true', default=False,
+    parser.add_argument('--cpn', '--cores-per-node', dest='cores_per_node', type=int, default=24,
+                        help="number of cores per node (default: 24)")
+
+    parser.add_argument('--ppj', '--procs-per-job', dest='procs_per_job', type=int, default=1,
+                        help="number of mpi processes per job (default: 1)")
+
+    parser.add_argument('-d', '--dry-run', dest='dry', action='store_true', default=False,
                         help="don't submit, only create scripts (default: false)")
 
-    parser.add_argument('--force', dest='force', action='store_true', default=False,
+    parser.add_argument('-f', '--force', dest='force', action='store_true', default=False,
                         help="don't ask for confirmation when deleting files (default: false)")
 
-    parser.add_argument('--clean', action='append', default=[],
+    parser.add_argument('-c', '--clean', action='append', default=[],
                         choices=['done', 'running', 'scripts', 'all'],
                         help='delete previously generated file (default: false)')
 
