@@ -69,6 +69,9 @@ def parse_arguments():
     parser.add_argument('-q', '--queue', dest='queue', type=str, default='normal',
                         help="name of batch queue for qjob (default: normal)")
 
+    parser.add_argument('-b', '--batch', dest='batch', type=str, default='pbs',
+                        help="name of batch system for qjob, currently pbs or lsf (default: pbs)")
+
     parser.add_argument('--cpn', '--cores-per-node', dest='cores_per_node', type=int, default=24,
                         help="number of cores per node (default: 24)")
 
@@ -95,14 +98,14 @@ def parse_arguments():
         args.clean.append('running')
         args.clean.append('scripts')
 
-    if args.cores_per_node > 24:
-        print "\n number of cores per node cannot be larger than 24, exiting"
-        sys.exit(1)
+#    if args.cores_per_node > 24:
+#        print "\n number of cores per node cannot be larger than 24, exiting"
+#        sys.exit(1)
 
-    if args.procs_per_job > 24:
-        print "\n number of procs per job cannot be larger than 24, exiting"
-        print " for jobs spanning multiple nodes, use the queue directly"
-        sys.exit(1)
+#    if args.procs_per_job > 24:
+#        print "\n number of procs per job cannot be larger than 24, exiting"
+#        print " for jobs spanning multiple nodes, use the queue directly"
+#        sys.exit(1)
 
     if not os.path.isdir(args.folder):
         print "\n Folder %s does not exist, exiting" % args.folder
@@ -136,6 +139,7 @@ class PackJobs:
 
         self.hours = kwargs.pop('hours', 1)
         self.queue = kwargs.pop('queue', 'normal')
+        self.batch = kwargs.pop('batch', 'pbs')
         self.cores_per_node = kwargs.pop('cores_per_node', 24)
         self.memory_per_node = kwargs.pop('memory_per_node', 96)
         self.procs_per_job = kwargs.pop('procs_per_job', 1)
@@ -147,6 +151,15 @@ class PackJobs:
 
         if len(kwargs.keys()):
             self.log("don't know what to do with remaining arguments %s" % str(kwargs))
+
+        if self.batch == 'lsf':
+            self.qjob_script_template = self.qjob_lsf_template
+            self.qjob_sub_cmd = 'bsub <'
+            self.qjob_stat_cmd = 'bjobs'
+        else:
+            self.qjob_script_template = self.qjob_pbs_template
+            self.qjob_sub_cmd = 'qsub'
+            self.qjob_stat_cmd = 'qstat'
 
     def run(self):
         """Run all steps (clean, read_jobs, write_scripts, submit_jobs)"""
@@ -169,8 +182,8 @@ class PackJobs:
             if 'scripts' in self.clean:
                 self.log("Warning: Deleting any previously generated qjob and worker scripts")
                 if self.confirm():
-                    for qjob_pbs in glob(os.path.join(self.folder, 'qjob*.pbs')):
-                        os.remove(qjob_pbs)
+                    for qjob_script in glob(os.path.join(self.folder, 'qjob.script')):
+                        os.remove(qjob_script)
                     for worker_py in glob(os.path.join(self.folder, 'worker*.py')):
                         os.remove(worker_py)
 
@@ -222,7 +235,7 @@ class PackJobs:
     def write_scripts(self):
         """Write queue job and launcher scripts according to given parameters"""
 
-        self.mpirun_job = "mpirun -host localhost -np %s %s > out 2> error" % \
+        self.mpirun_job = "mpirun -host $(hostname) -np %s %s > out 2> error" % \
             (self.procs_per_job, self.job_cmd)
 
         var_dict = {
@@ -256,13 +269,13 @@ class PackJobs:
             f.close()
             os.system("chmod +x %s" % worker_py_path)
 
-        existing_qjobs = glob(os.path.join(self.folder, 'qjob*.pbs'))
+        existing_qjobs = glob(os.path.join(self.folder, 'qjob*.script'))
 
-        self.qjob_pbs_path = os.path.join(self.folder, 'qjob%s.pbs' % (len(existing_qjobs) + 1))
+        self.qjob_script_path = os.path.join(self.folder, 'qjob%s.script' % (len(existing_qjobs) + 1))
 
         if not self.dry:
-            self.log("Writing %s" % self.qjob_pbs_path)
-            f = open(self.qjob_pbs_path, 'w')
+            self.log("Writing %s" % self.qjob_script_path)
+            f = open(self.qjob_script_path, 'w')
             f.write(dedent(self.qjob_script_template % var_dict))
             f.close()
 
@@ -270,12 +283,12 @@ class PackJobs:
         """Submit queue job"""
 
         if not self.dry:
-            self.log("Submitting %s" % self.qjob_pbs_path)
-            folder, script = os.path.split(self.qjob_pbs_path)
-            os.system("cd %s; qsub %s" % (folder, script))
+            self.log("Submitting %s" % self.qjob_script_path)
+            folder, script = os.path.split(self.qjob_script_path)
+            os.system("cd %s; %s %s" % (folder, self.qjob_sub_cmd, script))
 
         sys.stdout.write("\n")
-        os.system("qstat")
+        os.system(self.qjob_stat_cmd)
 
     def log(self, msg):
         """Print formatted log message"""
@@ -319,7 +332,7 @@ class PackJobs:
                 else:
                     return False
 
-    qjob_script_template = """\
+    qjob_pbs_template = """\
         #!/bin/bash
         #PBS -N %(worker)s
         #PBS -l select=%(nnodes)s:ncpus=%(cpn)s:mpiprocs=%(sjpn)s:ompthreads=%(ppj)s:mem=%(mpn)sGB
@@ -333,6 +346,25 @@ class PackJobs:
         module load Python %(job_mod)s
 
         # this mpirun, combined with mpiprocs and ompthreads queue settings,
+        # starts job launchers in the correct nodes
+        mpirun -np %(njobs)s ./%(worker_py)s
+        """
+
+    qjob_lsf_template = """\
+        #!/bin/bash
+        #BSUB -J %(worker)s
+        #BSUB -n %(njobs)s
+        #BSUB -q %(queue)s
+        #BSUB -R \"span[ptile=%(sjpn)s]\"
+        #BSUB -R \"rusage[mem=%(mpn)s]\"
+        #BSUB -W %(hours)s:00
+        #BSUB -eo
+        #BSUB -x
+
+        module purge
+        module load Python %(job_mod)s
+
+        # this mpirun, combined with the span[ptile] queue setting,
         # starts job launchers in the correct nodes
         mpirun -np %(njobs)s ./%(worker_py)s
         """
