@@ -66,6 +66,9 @@ def parse_arguments():
     parser.add_argument('-t', '--time', dest='hours', type=int, default=1,
                         help="number of hours for qjob (default: 1)")
 
+    parser.add_argument('-q', '--queue', dest='queue', type=str, default='normal',
+                        help="name of batch queue for qjob (default: normal)")
+
     parser.add_argument('--cpn', '--cores-per-node', dest='cores_per_node', type=int, default=24,
                         help="number of cores per node (default: 24)")
 
@@ -129,6 +132,7 @@ class PackJobs:
         self.job_mod = kwargs.pop('job_mod')
 
         self.hours = kwargs.pop('hours', 1)
+        self.queue = kwargs.pop('queue', 'normal')
         self.cores_per_node = kwargs.pop('cores_per_node', 24)
         self.procs_per_job = kwargs.pop('procs_per_job', 1)
         self.jobs_per_node = kwargs.pop('jobs_per_node', self.cores_per_node/self.procs_per_job)
@@ -226,6 +230,7 @@ class PackJobs:
             'sjpn': self.jobs_per_node,
             'ppj': self.procs_per_job,
             'hours': self.hours,
+            'queue': self.queue,
             'njobs': self.jobs_per_node*self.nodes,
             }
 
@@ -315,7 +320,7 @@ class PackJobs:
         #PBS -l select=%(nnodes)s:ncpus=%(cpn)s:mpiprocs=%(sjpn)s:ompthreads=%(ppj)s:mem=96GB
         #PBS -l walltime=%(hours)s:00:00
         #PBS -j oe
-        #PBS -q normal
+        #PBS -q %(queue)s
 
         cd $PBS_O_WORKDIR
 
