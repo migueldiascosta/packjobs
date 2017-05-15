@@ -72,6 +72,9 @@ def parse_arguments():
     parser.add_argument('--cpn', '--cores-per-node', dest='cores_per_node', type=int, default=24,
                         help="number of cores per node (default: 24)")
 
+    parser.add_argument('--mpn', '--memory-per-node', dest='memory_per_node', type=int, default=96,
+                        help="memory per node, in GB (default: 96)")
+
     parser.add_argument('--ppj', '--procs-per-job', dest='procs_per_job', type=int, default=1,
                         help="number of mpi processes per job (default: 1)")
 
@@ -134,6 +137,7 @@ class PackJobs:
         self.hours = kwargs.pop('hours', 1)
         self.queue = kwargs.pop('queue', 'normal')
         self.cores_per_node = kwargs.pop('cores_per_node', 24)
+        self.memory_per_node = kwargs.pop('memory_per_node', 96)
         self.procs_per_job = kwargs.pop('procs_per_job', 1)
         self.jobs_per_node = kwargs.pop('jobs_per_node', self.cores_per_node/self.procs_per_job)
 
@@ -227,6 +231,7 @@ class PackJobs:
             'job_mod': self.job_mod,
             'nnodes': self.nodes,
             'cpn': self.cores_per_node,
+            'mpn': self.memory_per_node,
             'sjpn': self.jobs_per_node,
             'ppj': self.procs_per_job,
             'hours': self.hours,
@@ -317,7 +322,7 @@ class PackJobs:
     qjob_script_template = """\
         #!/bin/bash
         #PBS -N %(worker)s
-        #PBS -l select=%(nnodes)s:ncpus=%(cpn)s:mpiprocs=%(sjpn)s:ompthreads=%(ppj)s:mem=96GB
+        #PBS -l select=%(nnodes)s:ncpus=%(cpn)s:mpiprocs=%(sjpn)s:ompthreads=%(ppj)s:mem=%(mpn)sGB
         #PBS -l walltime=%(hours)s:00:00
         #PBS -j oe
         #PBS -q %(queue)s
