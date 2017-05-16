@@ -250,6 +250,7 @@ class PackJobs:
             'hours': self.hours,
             'queue': self.queue,
             'njobs': self.jobs_per_node*self.nodes,
+            'nslots': self.nodes*self.cores_per_node,
             }
 
         existing_workers = glob(os.path.join(self.folder, 'worker*.py'))
@@ -353,10 +354,10 @@ class PackJobs:
     qjob_lsf_template = """\
         #!/bin/bash
         #BSUB -J %(worker)s
-        #BSUB -n %(njobs)s
+        #BSUB -n %(nslots)s
         #BSUB -q %(queue)s
         #BSUB -R \"span[ptile=%(sjpn)s]\"
-        #BSUB -R \"rusage[mem=%(mpn)s]\"
+        #BSUB -R \"rusage[mem=%(mpn)s000]\"
         #BSUB -W %(hours)s:00
         #BSUB -eo
         #BSUB -x
