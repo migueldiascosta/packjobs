@@ -7,7 +7,7 @@ from glob import glob
 from textwrap import dedent
 from collections import namedtuple
 
-__version__ = 20170331
+__version__ = 20200612
 
 __doc__ = """Pack multiple small jobs into large queue jobs
 
@@ -51,6 +51,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawTextHelpFormatter)
 
+    parser.add_argument('-V', '--version', action='version', version='%%(prog)s %s' % __version__)
+
     parser.add_argument('-i', '--input', dest='folder', type=str,
                         help="folder containing job folders (mandatory)", required=True)
 
@@ -58,7 +60,10 @@ def parse_arguments():
                         help="job command (e.g. vasp_std) (mandatory)", required=True)
 
     parser.add_argument('-m', '--mod', dest='job_mod', type=str,
-                        help="job module (e.g. VASP) (mandatory)", required=True)
+                        help="app module (e.g. VASP) (mandatory)", required=True)
+
+    parser.add_argument('-p', '--python-mod', dest='python_mod', type=str,
+                        help="python module (e.g. Python)", default='Python')
 
     parser.add_argument('-n', '--nodes', dest='nodes', type=int,
                         help="number of nodes (mandatory)", required=True)
@@ -98,30 +103,21 @@ def parse_arguments():
         args.clean.append('running')
         args.clean.append('scripts')
 
-#    if args.cores_per_node > 24:
-#        print "\n number of cores per node cannot be larger than 24, exiting"
-#        sys.exit(1)
-
-#    if args.procs_per_job > 24:
-#        print "\n number of procs per job cannot be larger than 24, exiting"
-#        print " for jobs spanning multiple nodes, use the queue directly"
-#        sys.exit(1)
-
     if not os.path.isdir(args.folder):
-        print "\n Folder %s does not exist, exiting" % args.folder
+        print("\n Folder %s does not exist, exiting" % args.folder)
         sys.exit(1)
 
-    if (args.cores_per_node % args.procs_per_job != 0):
-        print "\n cores_per_node must be divisible by procs_per_job"
+    if args.cores_per_node % args.procs_per_job != 0:
+        print("\n cores_per_node must be divisible by procs_per_job")
         sys.exit(1)
 
-    args.jobs_per_node = args.cores_per_node/args.procs_per_job
+    args.jobs_per_node = int(args.cores_per_node/args.procs_per_job)
 
-    print "\n Requesting %s nodes, %s cores per node, using %s processes per job" % \
-        (args.nodes, args.cores_per_node, args.procs_per_job)
+    print("\n Requesting %s nodes, %s cores per node, using %s processes per job" %
+          (args.nodes, args.cores_per_node, args.procs_per_job))
 
-    print "\n This means %s jobs per node, %s simultaneous jobs at any given time\n" % \
-        (args.jobs_per_node, args.jobs_per_node*args.nodes)
+    print("\n This means %s jobs per node, %s simultaneous jobs at any given time\n" %
+          (args.jobs_per_node, args.jobs_per_node*args.nodes))
 
     return args
 
@@ -136,6 +132,7 @@ class PackJobs:
         self.folder = kwargs.pop('folder')
         self.job_cmd = kwargs.pop('job_cmd')
         self.job_mod = kwargs.pop('job_mod')
+        self.python_mod = kwargs.pop('python_mod')
 
         self.hours = kwargs.pop('hours', 1)
         self.queue = kwargs.pop('queue', 'normal')
@@ -143,13 +140,13 @@ class PackJobs:
         self.cores_per_node = kwargs.pop('cores_per_node', 24)
         self.memory_per_node = kwargs.pop('memory_per_node', 96)
         self.procs_per_job = kwargs.pop('procs_per_job', 1)
-        self.jobs_per_node = kwargs.pop('jobs_per_node', self.cores_per_node/self.procs_per_job)
+        self.jobs_per_node = kwargs.pop('jobs_per_node', int(self.cores_per_node/self.procs_per_job))
 
         self.dry = kwargs.pop('dry', False)
         self.force = kwargs.pop('force', False)
         self.clean = kwargs.pop('clean', False)
 
-        if len(kwargs.keys()):
+        if len(kwargs.keys()) > 0:
             self.log("don't know what to do with remaining arguments %s" % str(kwargs))
 
         if self.batch == 'lsf':
@@ -160,6 +157,9 @@ class PackJobs:
             self.qjob_script_template = self.qjob_pbs_template
             self.qjob_sub_cmd = 'qsub'
             self.qjob_stat_cmd = 'qstat'
+
+        self.mpirun_job = ''
+        self.qjob_script_path = ''
 
     def run(self):
         """Run all steps (clean, read_jobs, write_scripts, submit_jobs)"""
@@ -223,11 +223,11 @@ class PackJobs:
                     os.remove(os.path.join(self.folder, job, 'done'))
                 jobs.extend(finished_jobs)
 
-        if len(jobs):
+        if len(jobs) > 0:
             self.log("Adding %s jobs" % len(jobs))
 
             if len(jobs) < self.jobs_per_node*self.nodes:
-                print "WARNING: with these jobs and parameters, some cores will be idle"
+                print("WARNING: with these jobs and parameters, some cores will be idle")
         else:
             self.log("No jobs left to run, exiting. You may want to use clean done and/or clean running")
             sys.exit(1)
@@ -242,6 +242,7 @@ class PackJobs:
             'folder': self.folder,
             'job_cmd': self.mpirun_job,
             'job_mod': self.job_mod,
+            'python_mod': self.python_mod,
             'nnodes': self.nodes,
             'cpn': self.cores_per_node,
             'mpn': self.memory_per_node,
@@ -250,7 +251,7 @@ class PackJobs:
             'hours': self.hours,
             'queue': self.queue,
             'njobs': self.jobs_per_node*self.nodes,
-            'nslots': self.nodes*self.cores_per_node,
+            'nslots': int(self.nodes*self.cores_per_node),
             }
 
         existing_workers = glob(os.path.join(self.folder, 'worker*.py'))
@@ -319,15 +320,16 @@ class PackJobs:
             prompt = '%s [%s]|%s: ' % (prompt, 'n', 'y')
 
         while True:
-            ans = raw_input(prompt)
+            ask = getattr(__builtins__, 'raw_input', input)
+            ans = ask(prompt)
             if not ans:
                 return default_yes
             if ans not in ['y', 'Y', 'n', 'N']:
-                print 'please enter y or n.'
+                print('please enter y or n.')
                 continue
-            if ans == 'y' or ans == 'Y':
+            if ans in ('Y', 'y'):
                 return True
-            if ans == 'n' or ans == 'N':
+            if ans in ('N', 'n'):
                 if abort_no:
                     sys.exit(1)
                 else:
@@ -344,7 +346,7 @@ class PackJobs:
         cd $PBS_O_WORKDIR
 
         module purge
-        module load Python %(job_mod)s
+        module load %(python_mod)s %(job_mod)s
 
         # this mpirun, combined with mpiprocs and ompthreads queue settings,
         # starts job launchers in the correct nodes
@@ -363,7 +365,7 @@ class PackJobs:
         #BSUB -x
 
         module purge
-        module load Python %(job_mod)s
+        module load %(python_mod)s %(job_mod)s
 
         # this mpirun, combined with the span[ptile] queue setting,
         # starts job launchers in the correct nodes
